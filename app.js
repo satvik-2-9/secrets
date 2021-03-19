@@ -6,8 +6,8 @@ const mongoose = require("mongoose") ;
 const session = require("express-session")
 const passport = require("passport") ;
 const passportLocalMongoose = require("passport-local-mongoose") ;
-
-
+const GoogleStrategy = require('passport-google-oauth20').Strategy;
+const findOrCreate = require("mongoose-findorcreate") ;
 const app = express() ;
 
 app.use(express.static("public")) ;
@@ -29,12 +29,14 @@ mongoose.set("useCreateIndex",true) ;
 const userSchema = new mongoose.Schema({
   // not just a simple mongoose schema .using the mongoose schema class.
   email:String,
-  password:String
+  password:String,
+  googleId:String
 });
 
  //cool so basically this is what we will use to salt
 // and hash user passwords and save them in our mongo db database.
 userSchema.plugin(passportLocalMongoose);
+userSchema.plugin(findOrCreate) ;
 
                  //defining the fields that we want to encrypt.
                  //process.env."environment_variable_name". to access its value fromm the .env file.
@@ -47,12 +49,43 @@ const User = new mongoose.model("User",userSchema);
 passport.use(User.createStrategy());
 
 // use static serialize and deserialize of model for passport session support
-passport.serializeUser(User.serializeUser());
-passport.deserializeUser(User.deserializeUser());
+passport.serializeUser(function(user, done) {
+  done(null, user.id);
+});
+
+passport.deserializeUser(function(id, done) {
+  User.findById(id, function(err, user) {
+    done(err, user);
+  });
+});
+passport.use(new GoogleStrategy({
+    clientID: process.env.CLIENT_ID,
+    clientSecret: process.env.CLIENT_SECRET,
+    callbackURL: "http://localhost:3000/auth/google/secret",
+    userProfileURL:"https://www.googleapis.com/oauth2/v3/userinfo"
+  },
+  function(accessToken, refreshToken, profile, cb) {
+    
+    User.findOrCreate({ googleId: profile.id }, function (err, user) {
+      return cb(err, user);
+    });
+  }
+));
 
 app.get("/",function(req,res){
   res.render("home") ;
 });
+app.get("/auth/google",
+  // initiating authentication with the strategy->google.
+  passport.authenticate("google",{scope:["profile"]})
+);
+// this is the page that google will redirect the user too after successfull authentication.
+app.get("/auth/google/secret",
+  passport.authenticate("google", { failureRedirect: "/register" }),
+  function(req, res) {
+    // Successful authentication, redirect home.
+    res.redirect("/secrets");
+  });
 app.get("/login",function(req,res){
   res.render("login") ;
 });
@@ -112,7 +145,7 @@ app.post("/login",function(req,res){
 // we stay logged in even if we close the tab because of the session cookie that was created by session.
 // that makes the computer remember the current logged in and authenticated user.
 
-// altho everytime we restart the server , the cookie is deleted and we are no longer authenticated. 
+// altho everytime we restart the server , the cookie is deleted and we are no longer authenticated.
 
 app.listen("3000",function(){
   console.log("Server started on port 3000");
