@@ -8,6 +8,7 @@ const passport = require("passport") ;
 const passportLocalMongoose = require("passport-local-mongoose") ;
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const findOrCreate = require("mongoose-findorcreate") ;
+
 const app = express() ;
 
 app.use(express.static("public")) ;
@@ -19,8 +20,9 @@ app.use(session({
   resave:false,
   saveUninitialized:false,
 }));
-
+// built in function to initialise passport.
 app.use(passport.initialize());
+// this command tells the server to use passport to handle all our sessions.
 app.use(passport.session());
 
 mongoose.connect("mongodb://localhost:27017/userDB",{useNewUrlParser:true,useUnifiedTopology:true}) ;
@@ -30,7 +32,8 @@ const userSchema = new mongoose.Schema({
   // not just a simple mongoose schema .using the mongoose schema class.
   email:String,
   password:String,
-  googleId:String
+  googleId:String,
+  secret:String
 });
 
  //cool so basically this is what we will use to salt
@@ -58,14 +61,18 @@ passport.deserializeUser(function(id, done) {
     done(err, user);
   });
 });
+
+// Oauth is basically a open standard for token based authorization .
+
 passport.use(new GoogleStrategy({
     clientID: process.env.CLIENT_ID,
     clientSecret: process.env.CLIENT_SECRET,
     callbackURL: "http://localhost:3000/auth/google/secret",
     userProfileURL:"https://www.googleapis.com/oauth2/v3/userinfo"
   },
+  // access token is what gives us access to the customer data.
   function(accessToken, refreshToken, profile, cb) {
-    
+
     User.findOrCreate({ googleId: profile.id }, function (err, user) {
       return cb(err, user);
     });
@@ -75,17 +82,26 @@ passport.use(new GoogleStrategy({
 app.get("/",function(req,res){
   res.render("home") ;
 });
+
+
+
 app.get("/auth/google",
   // initiating authentication with the strategy->google.
   passport.authenticate("google",{scope:["profile"]})
 );
 // this is the page that google will redirect the user too after successfull authentication.
 app.get("/auth/google/secret",
+   // then we locally authenticate the user.
   passport.authenticate("google", { failureRedirect: "/register" }),
   function(req, res) {
     // Successful authentication, redirect home.
     res.redirect("/secrets");
   });
+
+
+
+
+
 app.get("/login",function(req,res){
   res.render("login") ;
 });
@@ -94,11 +110,43 @@ app.get("/register",function(req,res){
 });
 
 app.get("/secrets",function(req,res){
+      // finding users in which the secret field is not null.
+      User.find({"secret":{$ne:null}},function(err,foundUsers){
+        if(err){
+          console.log(err);
+        }else{
+          if(foundUsers){
+            // rendering the secrets.ejs page and passing the foudusers to it to display em.
+            res.render("secrets",{usersWithSecrets:foundUsers}) ;
+          }
+        }
+      });
+});
+
+app.get("/submit",function(req,res){
   if(req.isAuthenticated()){
-    res.render("secrets") ;
+    res.render("submit") ;
   }else{
     res.redirect("/login") ;
   }
+});
+
+app.post("/submit",function(req,res){
+  const submitted_secret = req.body.secret;
+  // wheenever we start a log in session , passport saves the login details
+  // and it can be tapped into using req.user
+  User.findById(req.user.id,function(err,foundUser){
+    if(err){
+      console.log(err);
+    }else{
+      if(foundUser){
+        foundUser.secret = submitted_secret ;
+        foundUser.save(function(){
+          res.redirect("/secrets") ;
+        });
+      }
+    }
+  });
 });
 
 app.get("/logout",function(req,res){
@@ -107,6 +155,7 @@ app.get("/logout",function(req,res){
   res.redirect("/") ;
 });
 
+
 app.post("/register",function(req,res){
 
      User.register({username:req.body.username},req.body.password,function(err,user){
@@ -114,6 +163,9 @@ app.post("/register",function(req,res){
          console.log(err);
          res.redirect("/register") ;
        }else{
+         /* when we authenticate a user , we send a cookie to the
+          browser telling it to store the session info and keeo this user logged in
+          untill the browser is closed.*/
          passport.authenticate("local")(req,res,function(){
            // this callback will only be triggered if the authentication was successfull.
            res.redirect("/secrets") ;
